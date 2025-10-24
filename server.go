@@ -1,4 +1,3 @@
-// server.go
 package main
 
 import (
@@ -10,11 +9,10 @@ import (
 	"net/http"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // Import implícito do driver SQLite
+	_ "github.com/mattn/go-sqlite3" // Driver do SQLite
 )
 
-// Estrutura para parsear a resposta da API de cotação.
-// A API retorna um JSON com a chave "USDBRL", que contém os detalhes da cotação.
+// Estrutura para parsear a resposta completa da API de cotação.
 type ApiResponse struct {
 	USDBRL ExchangeRate `json:"USDBRL"`
 }
@@ -43,7 +41,7 @@ const (
 )
 
 func main() {
-	// Inicializa o banco de dados
+	// Inicializa o banco de dados e cria a tabela se não existir.
 	db, err := setupDatabase()
 	if err != nil {
 		log.Fatalf("Falha ao configurar o banco de dados: %v", err)
@@ -60,7 +58,7 @@ func main() {
 	}
 }
 
-// setupDatabase prepara o banco de dados SQLite, criando a tabela se não existir.
+// setupDatabase prepara a conexão com o banco de dados SQLite e cria a tabela.
 func setupDatabase() (*sql.DB, error) {
 	db, err := sql.Open(dbDriver, dbName)
 	if err != nil {
@@ -73,6 +71,7 @@ func setupDatabase() (*sql.DB, error) {
 		bid TEXT,
 		timestamp TEXT
 	);`
+
 	_, err = db.Exec(createTableSQL)
 	if err != nil {
 		return nil, err
@@ -80,12 +79,12 @@ func setupDatabase() (*sql.DB, error) {
 	return db, nil
 }
 
-// cotacaoHandler é uma closure que tem acesso à conexão do banco de dados.
+// cotacaoHandler é uma closure que recebe a conexão do banco de dados.
 func cotacaoHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log.Println("Requisição recebida em /cotacao")
 
-		// Busca a cotação da API externa
+		// 1. Busca a cotação da API externa
 		exchangeRate, err := fetchExchangeRate()
 		if err != nil {
 			log.Printf("Erro ao buscar cotação da API: %v", err)
@@ -93,15 +92,14 @@ func cotacaoHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Salva a cotação no banco de dados
+		// 2. Salva a cotação no banco de dados
 		err = saveExchangeRate(db, exchangeRate)
 		if err != nil {
+			// Loga o erro, mas não impede a resposta ao cliente, conforme o desafio.
 			log.Printf("Erro ao salvar cotação no banco de dados: %v", err)
-			// Não retornamos erro ao cliente aqui, pois a cotação foi obtida com sucesso.
-			// O erro é apenas logado no servidor.
 		}
 
-		// Prepara a resposta para o cliente (apenas o campo "bid")
+		// 3. Prepara a resposta para o cliente (apenas o campo "bid")
 		response := struct {
 			Bid string `json:"bid"`
 		}{
@@ -127,7 +125,6 @@ func fetchExchangeRate() (*ExchangeRate, error) {
 
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		// Verifica se o erro foi causado pelo timeout do contexto
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Println("Erro: Timeout de 200ms excedido ao buscar cotação na API.")
 		}
@@ -141,8 +138,7 @@ func fetchExchangeRate() (*ExchangeRate, error) {
 	}
 
 	var apiResponse ApiResponse
-	err = json.Unmarshal(body, &apiResponse)
-	if err != nil {
+	if err := json.Unmarshal(body, &apiResponse); err != nil {
 		return nil, err
 	}
 
@@ -162,7 +158,6 @@ func saveExchangeRate(db *sql.DB, rate *ExchangeRate) error {
 
 	_, err = stmt.ExecContext(ctx, rate.Bid, time.Now().Format(time.RFC3339))
 	if err != nil {
-		// Verifica se o erro foi causado pelo timeout do contexto
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Println("Erro: Timeout de 10ms excedido ao salvar no banco de dados.")
 		}
